@@ -1,0 +1,26 @@
+# s4 configuration
+s3_endpoint: http://s3-region.example.com
+bucket: s4_test
+read_range_max: 100
+# read_sparse: false
+# tls_no_verify: false
+
+read:
+  - name: job1
+    recordsize: 1mib
+    threadcount: 10
+    iterations: 100
+  - name: job2
+    recordsize: 4mib
+    threadcount: 10
+    iterations: 100
+
+write:
+  - name: job1
+    recordsize: 1mib
+    threadcount: 10
+    iterations: 100
+  - name: job2
+    recordsize: 4mib
+    threadcount: 10
+    iterations: 100
