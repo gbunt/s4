@@ -8,22 +8,23 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/dustin/go-humanize"
 	"gopkg.in/yaml.v2"
-	_ "io"
+	"io"
 	"io/ioutil"
 	"log"
 	"math/rand"
 	"os"
-	_ "runtime"
+	"os/signal"
+	"syscall"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 	"math"
 	"runtime"
-	_"flag"
 	"flag"
 	"net/http"
 	"net"
+	"crypto/tls"
 )
 
 type Stats struct {
@@ -39,11 +40,13 @@ type Job struct {
 }
 
 type Configs struct {
-	S3_endpoint string `yaml:"s3_endpoint"`
-	Bucket      string `yaml:"bucket"`
-	ReadRange   int    `yaml:"read_range_max"`
-	Write       []Job  `yaml:"write"`
-	Read        []Job  `yaml:"read"`
+	S3_endpoint   string `yaml:"s3_endpoint"`
+	tls_no_verify bool   `yaml:"tls_no_verify"`
+	Bucket        string `yaml:"bucket"`
+	ReadRange     int    `yaml:"read_range_max"`
+	ReadSparse    bool   `yaml:"read_sparse"`
+	Write         []Job  `yaml:"write"`
+	Read          []Job  `yaml:"read"`
 }
 
 var stats Stats
@@ -54,7 +57,8 @@ var config Configs
 var m sync.Mutex;
 
 var c = sync.NewCond(&m)
-var startRun bool;
+var startRun bool
+var then = time.Now()
 
 func s3_downloader(start int, stop int, recordSize string) int {
 	defer readGroup.Done()
@@ -73,6 +77,7 @@ func s3_downloader(start int, stop int, recordSize string) int {
 
 	svc := s3.New(sess, &aws.Config{HTTPClient: &http.Client{
 		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: config.tls_no_verify},
 			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
 				Timeout:   30 * time.Second,
@@ -92,8 +97,25 @@ func s3_downloader(start int, stop int, recordSize string) int {
 		panic(ferr)
 	}
 
+	// collect object names
+	params := &s3.ListObjectsInput{
+	        Bucket:    aws.String(config.Bucket),
+	        Delimiter: aws.String("/"),
+	        MaxKeys:   aws.Int64(5000),
+	        Prefix:    aws.String(recordSize + "/"),
+	}
+	resp, err := svc.ListObjects(params)
+	if err != nil {
+		panic(err.Error())
+	}
+	objects := make([]string, 1, config.ReadRange)
+	for _, item := range(resp.Contents) {
+		objects = append(objects, *item.Key)
+	}
+
 	for i := 0; i < stop; i++ {
-		k := aws.String(recordSize + "/" + strconv.Itoa(rand.Intn(config.ReadRange)))
+		n := 1+rand.Intn(config.ReadRange)
+		k := aws.String(objects[n])
 		params := &s3.GetObjectInput{
 			Bucket: aws.String(config.Bucket), // Required
 			Key:    k,
@@ -103,6 +125,10 @@ func s3_downloader(start int, stop int, recordSize string) int {
 			atomic.AddInt64(&stats.errors, 1)
 			fmt.Println(err.Error())
 		} else {
+			if config.ReadSparse == false {
+				// stream data to fh
+				io.Copy(d, resp.Body)
+			}
 			atomic.AddInt64(&stats.bytes, *resp.ContentLength)
 			atomic.AddInt64(&stats.reads, 1)
 			resp.Body.Close()
@@ -127,7 +153,7 @@ func s3_uploader(start int, stop int, recordSize string) int {
 		panic(err)
 	}
 
-	
+
 	sess := session.New(&aws.Config{
 		Endpoint:   aws.String(config.S3_endpoint),
 		Region:     aws.String("region1"),
@@ -135,6 +161,7 @@ func s3_uploader(start int, stop int, recordSize string) int {
 
 	svc := s3.New(sess, &aws.Config{HTTPClient: &http.Client{
 		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: config.tls_no_verify},
 			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
 				Timeout:   30 * time.Second,
@@ -202,7 +229,7 @@ func objectCount(bucketName string, recordSize string) int {
 		count += len(resp.Contents)
 
 		if count >= config.ReadRange && *stat == false {
-			log.Println("found enough objects in the boeket")
+			log.Println("found enough objects in the boeket for size:", recordSize)
 			return 0
 		}
 
@@ -241,12 +268,23 @@ func stats_printer() {
 			atomic.LoadInt64(&stats.reads)-reads,
 			uint64(math.Max(float64(atomic.LoadInt64(&stats.total_writes)-writes), 0)),
 			atomic.LoadInt64(&stats.writes)-writes,
-			humanize.Bytes(uint64(atomic.LoadInt64(&stats.bytes)-bytes)))
+			humanize.IBytes(uint64(atomic.LoadInt64(&stats.bytes)-bytes)))
 		reads = atomic.LoadInt64(&stats.reads)
 		writes = atomic.LoadInt64(&stats.writes)
 		bytes = atomic.LoadInt64(&stats.bytes)
 		time.Sleep(1 * time.Second)
 	}
+}
+
+func print_total() {
+
+	elapsed := time.Since(then)
+	fmt.Println("---")
+	log.Printf("Elapsed time in seconds: %f", elapsed.Seconds())
+	log.Printf("Total OPS: %d, operations per second: %d, bytes per second: %s",
+		(stats.reads + stats.writes), (stats.reads+stats.writes)/int64(elapsed.Seconds()),
+		humanize.IBytes(uint64(stats.bytes/(int64(elapsed.Seconds())))))
+
 }
 
 var stat = flag.Bool("stat", false, "stat target bucket and exit")
@@ -255,13 +293,24 @@ var help = flag.Bool("h", false, "need help")
 
 func main() {
 
+	ctrlc := make(chan os.Signal, 2)
+	signal.Notify(ctrlc, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-ctrlc
+		print_total()
+		os.Exit(0)
+		return
+	}()
+
 	flag.Parse()
 
 	if *help == true {
-		fmt.Println("Eddo, Jeffry and Gersoms -- S3 Stress (S4) tool")
+		fmt.Println("S3 Stress (S4) and Benchmark Swiss Army Knife")
 		flag.PrintDefaults()
 		return
 	}
+
+	rand.Seed(time.Now().UnixNano())
 
 	//filename := os.Args[1]
 	source, err := ioutil.ReadFile(*filename)
@@ -289,7 +338,6 @@ func main() {
 
 	startRun = false;
 	c.L.Lock();
-	then := time.Now()
 	for i := 0; i < len(config.Write); i++ {
 		for j := 0; j < config.Write[i].Threadcount; j++ {
 			go s3_uploader(j*config.Write[i].Iterations,
@@ -316,9 +364,7 @@ func main() {
 	writeGroup.Wait()
 	readGroup.Wait()
 	running = false
-	elapsed := time.Since(then)
-	log.Printf("Elapsed time in seconds: %f", elapsed.Seconds())
-	log.Printf("Total OPS: %d, operations per second: %d, bytes per second: %s",
-		(stats.reads + stats.writes), (stats.reads+stats.writes)/int64(elapsed.Seconds()),
-		humanize.IBytes(uint64(stats.bytes/(int64(elapsed.Seconds())))))
+
+	print_total()
+
 }
