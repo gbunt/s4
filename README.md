@@ -5,6 +5,7 @@ S3 Stress (S4) and Benchmark Swiss Army Knife
 
 - Clone this repository or just download `bin/linux/s4` and configuration files from `configs`
 - Create a Bucket on S3
+- Store S3 credentials in `~/.aws/credentials`. For more info see: https://docs.aws.amazon.com/cli/latest/userguide/cli-config-files.html
 - Edit or create a yaml configuration file (see `configs` for examples)
 - Before you can test GET ops, first PUT enough data to S3 by running `s4 -c <yaml configuration for writes>`. Example 100% PUT test:
 
