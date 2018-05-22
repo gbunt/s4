@@ -41,7 +41,7 @@ type Job struct {
 
 type Configs struct {
 	S3_endpoint   string `yaml:"s3_endpoint"`
-	tls_no_verify bool   `yaml:"tls_no_verify"`
+	TLS_no_verify bool   `yaml:"tls_no_verify"`
 	Bucket        string `yaml:"bucket"`
 	ReadRange     int    `yaml:"read_range_max"`
 	ReadSparse    bool   `yaml:"read_sparse"`
@@ -77,7 +77,7 @@ func s3_downloader(start int, stop int, recordSize string) int {
 
 	svc := s3.New(sess, &aws.Config{HTTPClient: &http.Client{
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: config.tls_no_verify},
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: config.TLS_no_verify},
 			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
 				Timeout:   30 * time.Second,
@@ -161,7 +161,7 @@ func s3_uploader(start int, stop int, recordSize string) int {
 
 	svc := s3.New(sess, &aws.Config{HTTPClient: &http.Client{
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: config.tls_no_verify},
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: config.TLS_no_verify},
 			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
 				Timeout:   30 * time.Second,
@@ -203,7 +203,22 @@ func objectCount(bucketName string, recordSize string) int {
 		Region:     aws.String("region1"),
 		DisableSSL: aws.Bool(true)})
 
-	svc := s3.New(sess)
+	svc := s3.New(sess, &aws.Config{HTTPClient: &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: config.TLS_no_verify},
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			MaxIdleConnsPerHost:   100,
+			TLSHandshakeTimeout:   3 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}})
+
 	truncated := true
 	count := 1 // offset
 	params := &s3.ListObjectsInput{
