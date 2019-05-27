@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/md5"
 	"crypto/tls"
 	"flag"
 	"fmt"
@@ -62,6 +63,8 @@ var c = sync.NewCond(&m)
 var startRun bool
 var then = time.Now()
 
+const logFile = "s4.log"
+
 func s3_downloader(start int, stop int, recordSize string) int {
 	defer readGroup.Done()
 
@@ -95,7 +98,7 @@ func s3_downloader(start int, stop int, recordSize string) int {
 
 	d, ferr := os.OpenFile("/dev/null", os.O_APPEND|os.O_WRONLY, os.ModeAppend)
 	if ferr != nil {
-		log.Fatal("Can not open output file")
+		log.Fatal("Cannot open output file")
 		panic(ferr)
 	}
 
@@ -198,8 +201,13 @@ func s3_uploader(start int, stop int, recordSize string) int {
 
 			atomic.AddInt64(&stats.writes, 1)
 			atomic.AddInt64(&stats.bytes, int64(byteSize))
-		}
 
+			// Log each Object
+			if *logging == true {
+				md := fmt.Sprintf("%x", md5.Sum(payload))
+				logger.Printf("%v %v", config.Bucket+"/"+recordSize+"/"+strconv.Itoa(i), md)
+			}
+		}
 	}
 	return 0
 }
@@ -312,6 +320,8 @@ func print_total() {
 var stat = flag.Bool("stat", false, "stat target bucket and exit")
 var filename = flag.String("c", "config.yaml", "YAML config file")
 var help = flag.Bool("h", false, "need help")
+var logging = flag.Bool("l", false, "Log putObject name/md5 to "+logFile)
+var logger *log.Logger
 
 func main() {
 
@@ -342,6 +352,16 @@ func main() {
 	err = yaml.Unmarshal(source, &config)
 	if err != nil {
 		log.Fatalf("error: %v", err)
+	}
+
+	// See if we need to log things
+	if *logging == true {
+		f, err := os.Create(logFile)
+		if err != nil {
+			panic(err)
+		}
+		defer f.Close()
+		logger = log.New(f, "", log.Ldate|log.Ltime|log.Lmicroseconds)
 	}
 
 	runtime.GOMAXPROCS(1000)

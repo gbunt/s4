@@ -44,6 +44,7 @@ ubuntu@golang-dev:~$ ./s4 -c configs/writes.yaml
 
 - Now do a read benchmark, or simulate a mixed workload
 
+> Optionally use `-l` during a write or mixed workload to log all Object names and md5 hashes.
 
 ## Configuration
 
