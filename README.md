@@ -56,6 +56,7 @@ bucket: s4_test
 read_range_max: 100
 # read_sparse: false
 # tls_no_verify: false
+# random_data: false
 
 read:
   - name: job1
