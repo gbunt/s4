@@ -95,3 +95,6 @@ With reads, when set to `true` `s4` reads response ContentLength and does not wa
 
 ##### tls_no_verify
 When using HTTPS and set to `true`, this disables certificate verification. Defaults to `false`
+
+##### random_data
+When set to `true` S4 generates psuedo-random data
