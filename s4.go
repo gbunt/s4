@@ -2,29 +2,30 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
+	"flag"
 	"fmt"
+	"io"
+	"io/ioutil"
+	"log"
+	"math"
+	"math/rand"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"runtime"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"syscall"
+	"time"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/dustin/go-humanize"
 	"gopkg.in/yaml.v2"
-	"io"
-	"io/ioutil"
-	"log"
-	"math/rand"
-	"os"
-	"os/signal"
-	"syscall"
-	"strconv"
-	"sync"
-	"sync/atomic"
-	"time"
-	"math"
-	"runtime"
-	"flag"
-	"net/http"
-	"net"
-	"crypto/tls"
 )
 
 type Stats struct {
@@ -40,13 +41,14 @@ type Job struct {
 }
 
 type Configs struct {
-	S3_endpoint   string `yaml:"s3_endpoint"`
-	TLS_no_verify bool   `yaml:"tls_no_verify"`
-	Bucket        string `yaml:"bucket"`
-	ReadRange     int    `yaml:"read_range_max"`
-	ReadSparse    bool   `yaml:"read_sparse"`
-	Write         []Job  `yaml:"write"`
-	Read          []Job  `yaml:"read"`
+	S3Endpoint  string `yaml:"s3_endpoint"`
+	NoVerifyTLS bool   `yaml:"tls_no_verify"`
+	RandomData  bool   `yaml:"random_data"`
+	Bucket      string `yaml:"bucket"`
+	ReadRange   int    `yaml:"read_range_max"`
+	ReadSparse  bool   `yaml:"read_sparse"`
+	Write       []Job  `yaml:"write"`
+	Read        []Job  `yaml:"read"`
 }
 
 var stats Stats
@@ -54,7 +56,7 @@ var writeGroup sync.WaitGroup
 var readGroup sync.WaitGroup
 var running bool
 var config Configs
-var m sync.Mutex;
+var m sync.Mutex
 
 var c = sync.NewCond(&m)
 var startRun bool
@@ -71,14 +73,14 @@ func s3_downloader(start int, stop int, recordSize string) int {
 	c.L.Unlock()
 
 	sess := session.New(&aws.Config{
-		Endpoint:   aws.String(config.S3_endpoint),
+		Endpoint:   aws.String(config.S3Endpoint),
 		Region:     aws.String("region1"),
 		DisableSSL: aws.Bool(true)})
 
 	svc := s3.New(sess, &aws.Config{HTTPClient: &http.Client{
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: config.TLS_no_verify},
-			Proxy: http.ProxyFromEnvironment,
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: config.NoVerifyTLS},
+			Proxy:           http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
 				Timeout:   30 * time.Second,
 				KeepAlive: 30 * time.Second,
@@ -99,22 +101,22 @@ func s3_downloader(start int, stop int, recordSize string) int {
 
 	// collect object names
 	params := &s3.ListObjectsInput{
-	        Bucket:    aws.String(config.Bucket),
-	        Delimiter: aws.String("/"),
-	        MaxKeys:   aws.Int64(5000),
-	        Prefix:    aws.String(recordSize + "/"),
+		Bucket:    aws.String(config.Bucket),
+		Delimiter: aws.String("/"),
+		MaxKeys:   aws.Int64(5000),
+		Prefix:    aws.String(recordSize + "/"),
 	}
 	resp, err := svc.ListObjects(params)
 	if err != nil {
 		panic(err.Error())
 	}
 	objects := make([]string, 1, config.ReadRange)
-	for _, item := range(resp.Contents) {
+	for _, item := range resp.Contents {
 		objects = append(objects, *item.Key)
 	}
 
 	for i := 0; i < stop; i++ {
-		n := 1+rand.Intn(config.ReadRange)
+		n := 1 + rand.Intn(config.ReadRange)
 		k := aws.String(objects[n])
 		params := &s3.GetObjectInput{
 			Bucket: aws.String(config.Bucket), // Required
@@ -153,16 +155,15 @@ func s3_uploader(start int, stop int, recordSize string) int {
 		panic(err)
 	}
 
-
 	sess := session.New(&aws.Config{
-		Endpoint:   aws.String(config.S3_endpoint),
+		Endpoint:   aws.String(config.S3Endpoint),
 		Region:     aws.String("region1"),
 		DisableSSL: aws.Bool(true)})
 
 	svc := s3.New(sess, &aws.Config{HTTPClient: &http.Client{
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: config.TLS_no_verify},
-			Proxy: http.ProxyFromEnvironment,
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: config.NoVerifyTLS},
+			Proxy:           http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
 				Timeout:   30 * time.Second,
 				KeepAlive: 30 * time.Second,
@@ -178,6 +179,12 @@ func s3_uploader(start int, stop int, recordSize string) int {
 	payload := make([]byte, byteSize, byteSize)
 
 	for i := start; i < stop; i++ {
+		// In case we need some pseudo-randomness
+		if config.RandomData == true {
+			if _, err := rand.Read(payload); err != nil {
+				panic(err)
+			}
+		}
 		params := &s3.PutObjectInput{
 			Bucket: aws.String(config.Bucket),
 			Key:    aws.String(recordSize + "/" + strconv.Itoa(i)),
@@ -199,14 +206,14 @@ func s3_uploader(start int, stop int, recordSize string) int {
 
 func objectCount(bucketName string, recordSize string) int {
 	sess := session.New(&aws.Config{
-		Endpoint:   aws.String(config.S3_endpoint),
+		Endpoint:   aws.String(config.S3Endpoint),
 		Region:     aws.String("region1"),
 		DisableSSL: aws.Bool(true)})
 
 	svc := s3.New(sess, &aws.Config{HTTPClient: &http.Client{
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: config.TLS_no_verify},
-			Proxy: http.ProxyFromEnvironment,
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: config.NoVerifyTLS},
+			Proxy:           http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
 				Timeout:   30 * time.Second,
 				KeepAlive: 30 * time.Second,
@@ -351,8 +358,8 @@ func main() {
 		return
 	}
 
-	startRun = false;
-	c.L.Lock();
+	startRun = false
+	c.L.Lock()
 	for i := 0; i < len(config.Write); i++ {
 		for j := 0; j < config.Write[i].Threadcount; j++ {
 			go s3_uploader(j*config.Write[i].Iterations,
