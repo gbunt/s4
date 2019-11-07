@@ -1,6 +1,8 @@
 # s4
 S3 Stress (S4) and Benchmark Swiss Army Knife
 
+![](https://github.com/gbunt/s4/workflows/Build/badge.svg)
+
 ## Usage
 
 - Clone this repository or just download `bin/linux/s4` and configuration files from `configs`
