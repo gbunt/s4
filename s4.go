@@ -312,8 +312,8 @@ func print_total() {
 	fmt.Println("---")
 	log.Printf("Elapsed time in seconds: %f", elapsed.Seconds())
 	log.Printf("Total OPS: %d, operations per second: %d, bytes per second: %s",
-		(stats.reads + stats.writes), (stats.reads+stats.writes)/int64(elapsed.Seconds()),
-		humanize.IBytes(uint64(stats.bytes/(int64(elapsed.Seconds())))))
+		(stats.reads + stats.writes), uint64(float64(stats.reads+stats.writes)/elapsed.Seconds()),
+		humanize.IBytes(uint64(float64(stats.bytes)/(elapsed.Seconds()))))
 
 }
 
