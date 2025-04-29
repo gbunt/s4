@@ -58,8 +58,9 @@ s3_endpoint: http://s3-region.example.com
 bucket: s4_test
 read_range_max: 100
 # read_sparse: false
-# tls_no_verify: false
 # random_data: false
+# tls_no_verify: false
+# disable_keepalive: false
 
 read:
   - name: job1
@@ -97,8 +98,11 @@ When testing reads, test against range `read_range_max` Objects. Eg. when set to
 ##### read_sparse
 With reads, when set to `true` `s4` reads response ContentLength and does not wait to stream the full payload. Defaults to `false`
 
+##### random_data
+When set to `true` S4 generates psuedo-random data
+
 ##### tls_no_verify
 When using HTTPS and set to `true`, this disables certificate verification. Defaults to `false`
 
-##### random_data
-When set to `true` S4 generates psuedo-random data
+#### disable_keepalive
+Disable keepalive connections. When doing DNS-based balancing across multiple nodes with keepalive enabled (default), most threads will use the same IP address. Disabling keepalive will result in a more balanced distribution of requests. Note: Does impact throughput.
