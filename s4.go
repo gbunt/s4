@@ -44,6 +44,7 @@ type Job struct {
 type Configs struct {
 	S3Endpoint  string `yaml:"s3_endpoint"`
 	NoVerifyTLS bool   `yaml:"tls_no_verify"`
+	NoKeepalive bool   `yaml:"disable_keepalive"`
 	RandomData  bool   `yaml:"random_data"`
 	Bucket      string `yaml:"bucket"`
 	ReadRange   int    `yaml:"read_range_max"`
@@ -88,6 +89,7 @@ func s3_downloader(start int, stop int, recordSize string) int {
 				Timeout:   30 * time.Second,
 				KeepAlive: 30 * time.Second,
 			}).DialContext,
+			DisableKeepAlives:     config.NoKeepalive,
 			MaxIdleConns:          100,
 			IdleConnTimeout:       90 * time.Second,
 			MaxIdleConnsPerHost:   100,
@@ -171,6 +173,7 @@ func s3_uploader(start int, stop int, recordSize string) int {
 				Timeout:   30 * time.Second,
 				KeepAlive: 30 * time.Second,
 			}).DialContext,
+			DisableKeepAlives:     config.NoKeepalive,
 			MaxIdleConns:          100,
 			IdleConnTimeout:       90 * time.Second,
 			MaxIdleConnsPerHost:   100,

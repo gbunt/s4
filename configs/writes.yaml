@@ -3,6 +3,7 @@ s3_endpoint: http://s3-region.example.com
 bucket: s4_test
 # tls_no_verify: false
 # random_data: false
+# disable_keepalive: false
 
 write:
   - name: job1
