@@ -86,7 +86,7 @@ func (r *resolverV2) ResolveEndpoint(_ context.Context, params s3.EndpointParame
 	return smithyendpoints.Endpoint{URI: *u}, nil
 }
 
-func getService() *s3.Client {
+func getClient() *s3.Client {
 	httpClient := http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: config.NoVerifyTLS},
@@ -109,12 +109,10 @@ func getService() *s3.Client {
 		panic(err)
 	}
 
-	svc := s3.NewFromConfig(cfg, func(o *s3.Options) {
+	return s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.EndpointResolverV2 = &resolverV2{fmt.Sprintf("http://%s.%s", "region1", config.S3Endpoint)}
 		o.EndpointOptions.DisableHTTPS = true
 	})
-
-	return svc
 }
 
 func s3_downloader(start int, stop int, recordSize string) int {
@@ -127,7 +125,7 @@ func s3_downloader(start int, stop int, recordSize string) int {
 	}
 	c.L.Unlock()
 
-	svc := getService()
+	svc := getClient()
 
 	d, ferr := os.OpenFile("/dev/null", os.O_APPEND|os.O_WRONLY, os.ModeAppend)
 	if ferr != nil {
@@ -199,7 +197,7 @@ func s3_uploader(start int, stop int, recordSize string) int {
 		panic(err)
 	}
 
-	svc := getService()
+	svc := getClient()
 
 	payload := make([]byte, byteSize)
 
@@ -239,7 +237,7 @@ func s3_uploader(start int, stop int, recordSize string) int {
 }
 
 func objectCount(bucketName string, recordSize string) int {
-	svc := getService()
+	svc := getClient()
 
 	truncated := true
 	count := 1 // offset
