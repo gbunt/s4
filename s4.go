@@ -104,7 +104,7 @@ func getClient() *s3.Client {
 		},
 	}
 
-	cfg, err := awscfg.LoadDefaultConfig(context.TODO(), awscfg.WithRegion("region1"), awscfg.WithHTTPClient(&httpClient))
+	cfg, err := awscfg.LoadDefaultConfig(context.Background(), awscfg.WithRegion("region1"), awscfg.WithHTTPClient(&httpClient))
 	if err != nil {
 		panic(err)
 	}
@@ -140,7 +140,7 @@ func s3_downloader(start int, stop int, recordSize string) int {
 		MaxKeys:   aws.Int32(5000),
 		Prefix:    aws.String(recordSize + "/"),
 	}
-	resp, err := svc.ListObjects(context.TODO(), params)
+	resp, err := svc.ListObjects(context.Background(), params)
 	if err != nil {
 		panic(err.Error())
 	}
@@ -156,7 +156,7 @@ func s3_downloader(start int, stop int, recordSize string) int {
 			Bucket: aws.String(config.Bucket), // Required
 			Key:    k,
 		}
-		resp, err := svc.GetObject(context.TODO(), params)
+		resp, err := svc.GetObject(context.Background(), params)
 		if err != nil {
 			if config.AbortOnError {
 				panic(err)
@@ -213,7 +213,7 @@ func s3_uploader(start int, stop int, recordSize string) int {
 			Key:    aws.String(recordSize + "/" + strconv.Itoa(i)),
 			Body:   bytes.NewReader(payload),
 		}
-		_, err := svc.PutObject(context.TODO(), params)
+		_, err := svc.PutObject(context.Background(), params)
 		if err != nil {
 			if config.AbortOnError {
 				panic(err)
@@ -249,7 +249,7 @@ func objectCount(bucketName string, recordSize string) int {
 	}
 
 	for truncated {
-		resp, err := svc.ListObjects(context.TODO(), params)
+		resp, err := svc.ListObjects(context.Background(), params)
 
 		if err != nil {
 			panic(err.Error())
