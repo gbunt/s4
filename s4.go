@@ -74,10 +74,14 @@ func s3_downloader(start int, stop int, recordSize string) int {
 	}
 	c.L.Unlock()
 
-	sess := session.New(&aws.Config{
+	sess, err := session.NewSession(&aws.Config{
 		Endpoint:   aws.String(config.S3Endpoint),
 		Region:     aws.String("region1"),
 		DisableSSL: aws.Bool(true)})
+
+	if err != nil {
+		panic(err)
+	}
 
 	svc := s3.New(sess, &aws.Config{HTTPClient: &http.Client{
 		Transport: &http.Transport{
@@ -162,10 +166,14 @@ func s3_uploader(start int, stop int, recordSize string) int {
 		panic(err)
 	}
 
-	sess := session.New(&aws.Config{
+	sess, err := session.NewSession(&aws.Config{
 		Endpoint:   aws.String(config.S3Endpoint),
 		Region:     aws.String("region1"),
 		DisableSSL: aws.Bool(true)})
+
+	if err != nil {
+		panic(err)
+	}
 
 	svc := s3.New(sess, &aws.Config{HTTPClient: &http.Client{
 		Transport: &http.Transport{
@@ -218,10 +226,14 @@ func s3_uploader(start int, stop int, recordSize string) int {
 }
 
 func objectCount(bucketName string, recordSize string) int {
-	sess := session.New(&aws.Config{
+	sess, err := session.NewSession(&aws.Config{
 		Endpoint:   aws.String(config.S3Endpoint),
 		Region:     aws.String("region1"),
 		DisableSSL: aws.Bool(true)})
+
+	if err != nil {
+		panic(err)
+	}
 
 	svc := s3.New(sess, &aws.Config{HTTPClient: &http.Client{
 		Transport: &http.Transport{
