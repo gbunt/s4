@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"crypto/tls"
 	"flag"
@@ -12,6 +13,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"runtime"
@@ -21,9 +23,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"         // nolint: staticcheck
-	"github.com/aws/aws-sdk-go/aws/session" // nolint: staticcheck
-	"github.com/aws/aws-sdk-go/service/s3"  // nolint: staticcheck
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awscfg "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	smithyendpoints "github.com/aws/smithy-go/endpoints"
 	"github.com/dustin/go-humanize"
 	"gopkg.in/yaml.v2"
 )
@@ -65,26 +68,26 @@ var then = time.Now()
 
 const logFile = "s4.log"
 
-func s3_downloader(start int, stop int, recordSize string) int {
-	defer readGroup.Done()
+// AWS resolverV2 implementation
+type resolverV2 struct {
+	endpoint string
+}
 
-	atomic.AddInt64(&stats.total_reads, int64(stop-start))
-	c.L.Lock()
-	for !startRun {
-		c.Wait()
+func (r *resolverV2) ResolveEndpoint(_ context.Context, params s3.EndpointParameters) (
+	smithyendpoints.Endpoint, error) {
+	path := r.endpoint
+	if params.Bucket != nil {
+		path += "/" + *params.Bucket
 	}
-	c.L.Unlock()
-
-	sess, err := session.NewSession(&aws.Config{
-		Endpoint:   aws.String(config.S3Endpoint),
-		Region:     aws.String("region1"),
-		DisableSSL: aws.Bool(true)})
-
+	u, err := url.Parse(path)
 	if err != nil {
-		panic(err)
+		return smithyendpoints.Endpoint{}, err
 	}
+	return smithyendpoints.Endpoint{URI: *u}, nil
+}
 
-	svc := s3.New(sess, &aws.Config{HTTPClient: &http.Client{
+func getService() *s3.Client {
+	httpClient := http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: config.NoVerifyTLS},
 			Proxy:           http.ProxyFromEnvironment,
@@ -99,7 +102,32 @@ func s3_downloader(start int, stop int, recordSize string) int {
 			TLSHandshakeTimeout:   3 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
 		},
-	}})
+	}
+
+	cfg, err := awscfg.LoadDefaultConfig(context.TODO(), awscfg.WithRegion("region1"), awscfg.WithHTTPClient(&httpClient))
+	if err != nil {
+		panic(err)
+	}
+
+	svc := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.EndpointResolverV2 = &resolverV2{fmt.Sprintf("http://%s.%s", "region1", config.S3Endpoint)}
+		o.EndpointOptions.DisableHTTPS = true
+	})
+
+	return svc
+}
+
+func s3_downloader(start int, stop int, recordSize string) int {
+	defer readGroup.Done()
+
+	atomic.AddInt64(&stats.total_reads, int64(stop-start))
+	c.L.Lock()
+	for !startRun {
+		c.Wait()
+	}
+	c.L.Unlock()
+
+	svc := getService()
 
 	d, ferr := os.OpenFile("/dev/null", os.O_APPEND|os.O_WRONLY, os.ModeAppend)
 	if ferr != nil {
@@ -111,10 +139,10 @@ func s3_downloader(start int, stop int, recordSize string) int {
 	params := &s3.ListObjectsInput{
 		Bucket:    aws.String(config.Bucket),
 		Delimiter: aws.String("/"),
-		MaxKeys:   aws.Int64(5000),
+		MaxKeys:   aws.Int32(5000),
 		Prefix:    aws.String(recordSize + "/"),
 	}
-	resp, err := svc.ListObjects(params)
+	resp, err := svc.ListObjects(context.TODO(), params)
 	if err != nil {
 		panic(err.Error())
 	}
@@ -130,7 +158,7 @@ func s3_downloader(start int, stop int, recordSize string) int {
 			Bucket: aws.String(config.Bucket), // Required
 			Key:    k,
 		}
-		resp, err := svc.GetObject(params)
+		resp, err := svc.GetObject(context.TODO(), params)
 		if err != nil {
 			if config.AbortOnError {
 				panic(err)
@@ -171,31 +199,7 @@ func s3_uploader(start int, stop int, recordSize string) int {
 		panic(err)
 	}
 
-	sess, err := session.NewSession(&aws.Config{
-		Endpoint:   aws.String(config.S3Endpoint),
-		Region:     aws.String("region1"),
-		DisableSSL: aws.Bool(true)})
-
-	if err != nil {
-		panic(err)
-	}
-
-	svc := s3.New(sess, &aws.Config{HTTPClient: &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: config.NoVerifyTLS},
-			Proxy:           http.ProxyFromEnvironment,
-			DialContext: (&net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-			DisableKeepAlives:     config.NoKeepalive,
-			MaxIdleConns:          100,
-			IdleConnTimeout:       90 * time.Second,
-			MaxIdleConnsPerHost:   100,
-			TLSHandshakeTimeout:   3 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-		},
-	}})
+	svc := getService()
 
 	payload := make([]byte, byteSize)
 
@@ -211,7 +215,7 @@ func s3_uploader(start int, stop int, recordSize string) int {
 			Key:    aws.String(recordSize + "/" + strconv.Itoa(i)),
 			Body:   bytes.NewReader(payload),
 		}
-		_, err := svc.PutObject(params)
+		_, err := svc.PutObject(context.TODO(), params)
 		if err != nil {
 			if config.AbortOnError {
 				panic(err)
@@ -235,43 +239,19 @@ func s3_uploader(start int, stop int, recordSize string) int {
 }
 
 func objectCount(bucketName string, recordSize string) int {
-	sess, err := session.NewSession(&aws.Config{
-		Endpoint:   aws.String(config.S3Endpoint),
-		Region:     aws.String("region1"),
-		DisableSSL: aws.Bool(true)})
-
-	if err != nil {
-		panic(err)
-	}
-
-	svc := s3.New(sess, &aws.Config{HTTPClient: &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: config.NoVerifyTLS},
-			Proxy:           http.ProxyFromEnvironment,
-			DialContext: (&net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-			MaxIdleConns:          100,
-			IdleConnTimeout:       90 * time.Second,
-			MaxIdleConnsPerHost:   100,
-			TLSHandshakeTimeout:   3 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-		},
-	}})
+	svc := getService()
 
 	truncated := true
 	count := 1 // offset
 	params := &s3.ListObjectsInput{
 		Bucket:    aws.String(config.Bucket),
 		Delimiter: aws.String("/"),
-		MaxKeys:   aws.Int64(5000),
+		MaxKeys:   aws.Int32(5000),
 		Prefix:    aws.String(recordSize + "/"),
 	}
 
 	for truncated {
-
-		resp, err := svc.ListObjects(params)
+		resp, err := svc.ListObjects(context.TODO(), params)
 
 		if err != nil {
 			panic(err.Error())
@@ -290,7 +270,7 @@ func objectCount(bucketName string, recordSize string) int {
 		}
 
 		if *resp.IsTruncated {
-			params.SetMarker(*resp.NextMarker)
+			// TODODODODOODODDOO params.SetMarker(*resp.NextMarker)
 			truncated = *resp.IsTruncated
 		} else {
 			truncated = false
