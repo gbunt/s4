@@ -110,8 +110,8 @@ func getClient() *s3.Client {
 	}
 
 	return s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.EndpointResolverV2 = &resolverV2{fmt.Sprintf("http://%s.%s", "region1", config.S3Endpoint)}
-		o.EndpointOptions.DisableHTTPS = true
+		o.EndpointResolverV2 = &resolverV2{fmt.Sprintf("http://%s", config.S3Endpoint)}
+		o.UsePathStyle = true
 	})
 }
 
@@ -268,7 +268,7 @@ func objectCount(bucketName string, recordSize string) int {
 		}
 
 		if *resp.IsTruncated {
-			// TODODODODOODODDOO params.SetMarker(*resp.NextMarker)
+			params.Marker = resp.NextMarker
 			truncated = *resp.IsTruncated
 		} else {
 			truncated = false

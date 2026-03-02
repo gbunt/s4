@@ -1,0 +1,11 @@
+{
+    "cSpell.words": [
+        "awscfg",
+        "DisableKeepAlives",
+        "keepalive",
+        "nolint",
+        "recordsize",
+        "smithyendpoints",
+        "threadcount"
+    ]
+}
