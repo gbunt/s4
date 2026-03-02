@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"math"
 	"math/rand"
@@ -22,9 +21,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/aws"         // nolint: staticcheck
+	"github.com/aws/aws-sdk-go/aws/session" // nolint: staticcheck
+	"github.com/aws/aws-sdk-go/service/s3"  // nolint: staticcheck
 	"github.com/dustin/go-humanize"
 	"gopkg.in/yaml.v2"
 )
@@ -56,7 +55,6 @@ type Configs struct {
 var stats Stats
 var writeGroup sync.WaitGroup
 var readGroup sync.WaitGroup
-var running bool
 var config Configs
 var m sync.Mutex
 
@@ -71,15 +69,19 @@ func s3_downloader(start int, stop int, recordSize string) int {
 
 	atomic.AddInt64(&stats.total_reads, int64(stop-start))
 	c.L.Lock()
-	for startRun == false {
+	for !startRun {
 		c.Wait()
 	}
 	c.L.Unlock()
 
-	sess := session.New(&aws.Config{
+	sess, err := session.NewSession(&aws.Config{
 		Endpoint:   aws.String(config.S3Endpoint),
 		Region:     aws.String("region1"),
 		DisableSSL: aws.Bool(true)})
+
+	if err != nil {
+		panic(err)
+	}
 
 	svc := s3.New(sess, &aws.Config{HTTPClient: &http.Client{
 		Transport: &http.Transport{
@@ -132,16 +134,20 @@ func s3_downloader(start int, stop int, recordSize string) int {
 			atomic.AddInt64(&stats.errors, 1)
 			fmt.Println(err.Error())
 		} else {
-			if config.ReadSparse == false {
+			if !config.ReadSparse {
 				// stream data to fh
-				io.Copy(d, resp.Body)
+				if _, err := io.Copy(d, resp.Body); err != nil {
+					panic(err)
+				}
 			}
 			atomic.AddInt64(&stats.bytes, *resp.ContentLength)
 			atomic.AddInt64(&stats.reads, 1)
-			resp.Body.Close()
+			if err := resp.Body.Close(); err != nil {
+				panic(err)
+			}
 		}
 	}
-	d.Close()
+	d.Close() // nolint: errcheck
 	return 0
 }
 
@@ -150,7 +156,7 @@ func s3_uploader(start int, stop int, recordSize string) int {
 	atomic.AddInt64(&stats.total_writes, int64(stop-start))
 	defer writeGroup.Done()
 	c.L.Lock()
-	for startRun == false {
+	for !startRun {
 		c.Wait()
 	}
 	c.L.Unlock()
@@ -160,10 +166,14 @@ func s3_uploader(start int, stop int, recordSize string) int {
 		panic(err)
 	}
 
-	sess := session.New(&aws.Config{
+	sess, err := session.NewSession(&aws.Config{
 		Endpoint:   aws.String(config.S3Endpoint),
 		Region:     aws.String("region1"),
 		DisableSSL: aws.Bool(true)})
+
+	if err != nil {
+		panic(err)
+	}
 
 	svc := s3.New(sess, &aws.Config{HTTPClient: &http.Client{
 		Transport: &http.Transport{
@@ -182,12 +192,12 @@ func s3_uploader(start int, stop int, recordSize string) int {
 		},
 	}})
 
-	payload := make([]byte, byteSize, byteSize)
+	payload := make([]byte, byteSize)
 
 	for i := start; i < stop; i++ {
 		// In case we need some pseudo-randomness
-		if config.RandomData == true {
-			if _, err := rand.Read(payload); err != nil {
+		if config.RandomData {
+			if _, err := rand.Read(payload); err != nil { // nolint: staticcheck
 				panic(err)
 			}
 		}
@@ -206,7 +216,7 @@ func s3_uploader(start int, stop int, recordSize string) int {
 			atomic.AddInt64(&stats.bytes, int64(byteSize))
 
 			// Log each Object
-			if *logging == true {
+			if *logging {
 				md := fmt.Sprintf("%x", md5.Sum(payload))
 				logger.Printf("%v %v", config.Bucket+"/"+recordSize+"/"+strconv.Itoa(i), md)
 			}
@@ -216,10 +226,14 @@ func s3_uploader(start int, stop int, recordSize string) int {
 }
 
 func objectCount(bucketName string, recordSize string) int {
-	sess := session.New(&aws.Config{
+	sess, err := session.NewSession(&aws.Config{
 		Endpoint:   aws.String(config.S3Endpoint),
 		Region:     aws.String("region1"),
 		DisableSSL: aws.Bool(true)})
+
+	if err != nil {
+		panic(err)
+	}
 
 	svc := s3.New(sess, &aws.Config{HTTPClient: &http.Client{
 		Transport: &http.Transport{
@@ -246,7 +260,7 @@ func objectCount(bucketName string, recordSize string) int {
 		Prefix:    aws.String(recordSize + "/"),
 	}
 
-	for truncated == true {
+	for truncated {
 
 		resp, err := svc.ListObjects(params)
 
@@ -261,12 +275,12 @@ func objectCount(bucketName string, recordSize string) int {
 
 		count += len(resp.Contents)
 
-		if count >= config.ReadRange && *stat == false {
+		if count >= config.ReadRange && !*stat {
 			log.Println("found enough objects in the boeket for size:", recordSize)
 			return 0
 		}
 
-		if *resp.IsTruncated == true {
+		if *resp.IsTruncated {
 			params.SetMarker(*resp.NextMarker)
 			truncated = *resp.IsTruncated
 		} else {
@@ -279,7 +293,7 @@ func objectCount(bucketName string, recordSize string) int {
 
 	}
 
-	if *stat == true {
+	if *stat {
 		fmt.Printf("Found %d objects of size %s in bucket\n", count, recordSize)
 		return 0
 	}
@@ -288,14 +302,12 @@ func objectCount(bucketName string, recordSize string) int {
 }
 
 func stats_printer() {
-
-	var reads, bytes, writes int64
-	reads = atomic.LoadInt64(&stats.reads)
-	reads = atomic.LoadInt64(&stats.writes)
-	bytes = atomic.LoadInt64(&stats.bytes)
+	reads := atomic.LoadInt64(&stats.reads)
+	writes := atomic.LoadInt64(&stats.writes)
+	bytes := atomic.LoadInt64(&stats.bytes)
 	time.Sleep(1 * time.Second)
 
-	for startRun == true {
+	for startRun {
 		log.Printf("queued/read: %d/%4d, queued/write: %6d/%4d, byte/s: %4s\n",
 			uint64(math.Max(float64(atomic.LoadInt64(&stats.total_reads)-reads), 0)),
 			atomic.LoadInt64(&stats.reads)-reads,
@@ -334,21 +346,18 @@ func main() {
 		<-ctrlc
 		print_total()
 		os.Exit(0)
-		return
 	}()
 
 	flag.Parse()
 
-	if *help == true {
+	if *help {
 		fmt.Println("S3 Stress (S4) and Benchmark Swiss Army Knife")
 		flag.PrintDefaults()
 		return
 	}
 
-	rand.Seed(time.Now().UnixNano())
-
 	//filename := os.Args[1]
-	source, err := ioutil.ReadFile(*filename)
+	source, err := os.ReadFile(*filename)
 	if err != nil {
 		panic(err)
 	}
@@ -358,12 +367,12 @@ func main() {
 	}
 
 	// See if we need to log things
-	if *logging == true {
+	if *logging {
 		f, err := os.Create(logFile)
 		if err != nil {
 			panic(err)
 		}
-		defer f.Close()
+		defer f.Close() // nolint: errcheck
 		logger = log.New(f, "", log.Ldate|log.Ltime|log.Lmicroseconds)
 	}
 
@@ -377,7 +386,7 @@ func main() {
 		}
 	}
 
-	if *stat == true {
+	if *stat {
 		return
 	}
 
@@ -408,7 +417,6 @@ func main() {
 
 	writeGroup.Wait()
 	readGroup.Wait()
-	running = false
 
 	print_total()
 
