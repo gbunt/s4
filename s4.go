@@ -197,7 +197,7 @@ func s3_uploader(start int, stop int, recordSize string) int {
 	for i := start; i < stop; i++ {
 		// In case we need some pseudo-randomness
 		if config.RandomData {
-			if _, err := rand.Read(payload); err != nil {
+			if _, err := rand.Read(payload); err != nil { // nolint: staticcheck
 				panic(err)
 			}
 		}
