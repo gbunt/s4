@@ -35,7 +35,7 @@ jobs:
       run: go build -v .
 
     - name: Archive artifact
-      uses: actions/upload-artifact@v1
+      uses: actions/upload-artifact@v4
       with:
         name: S4 binary Linux
         path: s4
