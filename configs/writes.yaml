@@ -4,6 +4,7 @@ bucket: s4_test
 # tls_no_verify: false
 # random_data: false
 # disable_keepalive: false
+# abort_on_error: false
 
 write:
   - name: job1
