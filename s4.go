@@ -21,9 +21,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/aws"         // nolint: staticcheck
+	"github.com/aws/aws-sdk-go/aws/session" // nolint: staticcheck
+	"github.com/aws/aws-sdk-go/service/s3"  // nolint: staticcheck
 	"github.com/dustin/go-humanize"
 	"gopkg.in/yaml.v2"
 )
