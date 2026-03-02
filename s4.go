@@ -41,15 +41,16 @@ type Job struct {
 }
 
 type Configs struct {
-	S3Endpoint  string `yaml:"s3_endpoint"`
-	NoVerifyTLS bool   `yaml:"tls_no_verify"`
-	NoKeepalive bool   `yaml:"disable_keepalive"`
-	RandomData  bool   `yaml:"random_data"`
-	Bucket      string `yaml:"bucket"`
-	ReadRange   int    `yaml:"read_range_max"`
-	ReadSparse  bool   `yaml:"read_sparse"`
-	Write       []Job  `yaml:"write"`
-	Read        []Job  `yaml:"read"`
+	S3Endpoint   string `yaml:"s3_endpoint"`
+	NoVerifyTLS  bool   `yaml:"tls_no_verify"`
+	NoKeepalive  bool   `yaml:"disable_keepalive"`
+	AbortOnError bool   `yaml:"abort_on_error"`
+	RandomData   bool   `yaml:"random_data"`
+	Bucket       string `yaml:"bucket"`
+	ReadRange    int    `yaml:"read_range_max"`
+	ReadSparse   bool   `yaml:"read_sparse"`
+	Write        []Job  `yaml:"write"`
+	Read         []Job  `yaml:"read"`
 }
 
 var stats Stats
@@ -131,6 +132,10 @@ func s3_downloader(start int, stop int, recordSize string) int {
 		}
 		resp, err := svc.GetObject(params)
 		if err != nil {
+			if config.AbortOnError {
+				panic(err)
+			}
+
 			atomic.AddInt64(&stats.errors, 1)
 			fmt.Println(err.Error())
 		} else {
@@ -208,6 +213,10 @@ func s3_uploader(start int, stop int, recordSize string) int {
 		}
 		_, err := svc.PutObject(params)
 		if err != nil {
+			if config.AbortOnError {
+				panic(err)
+			}
+
 			atomic.AddInt64(&stats.errors, 1)
 			fmt.Println(err.Error())
 		} else {
@@ -269,14 +278,14 @@ func objectCount(bucketName string, recordSize string) int {
 		}
 
 		if len(resp.Contents) == 0 {
-			log.Println("boeket is empty")
+			log.Println("bucket is empty")
 			return 1
 		}
 
 		count += len(resp.Contents)
 
 		if count >= config.ReadRange && !*stat {
-			log.Println("found enough objects in the boeket for size:", recordSize)
+			log.Println("found enough objects in the bucket for size:", recordSize)
 			return 0
 		}
 
