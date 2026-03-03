@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -110,7 +111,11 @@ func getClient() *s3.Client {
 	}
 
 	return s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.EndpointResolverV2 = &resolverV2{fmt.Sprintf("http://%s", config.S3Endpoint)}
+		endpoint := config.S3Endpoint
+		if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
+			endpoint = "http://" + endpoint
+		}
+		o.EndpointResolverV2 = &resolverV2{endpoint}
 		o.UsePathStyle = true
 	})
 }
